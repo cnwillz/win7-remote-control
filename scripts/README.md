@@ -58,7 +58,8 @@
 |------|------|
 | `smb_mount.sh` | SMB 挂载/卸载 Win7 共享目录 |
 | `ssh_remote.py` | 远程执行命令,编译,部署 |
-| `api_test.py` | 测试 HttpServer API |
+| `api_test.py` | 测试 HttpServer API (快速验证) |
+| `interactive_test.py` | 交互式测试 (截图→分析→操作→验证) |
 | `deploy.sh` | 完整部署流程 |
 
 ## 连接信息
@@ -93,6 +94,20 @@ sc query Win7RCHttp
 # 启动服务 (服务会自动启动 HttpServer.exe)
 sc start Win7RCHttp
 ```
+
+## 重要测试发现
+
+⚠️ **GDI BitBlt 截图不显示鼠标光标**,无法从截图确认鼠标位置
+
+**已验证可用的坐标**:
+- 任务栏开始菜单按钮: (720, 870) - 点击成功打开开始菜单
+- 桌面图标在屏幕**左侧**第一列
+
+**正确测试流程**:
+1. 截图
+2. 仔细分析截图确定目标位置
+3. 执行操作
+4. 截图验证结果
 
 ## 已知问题
 
