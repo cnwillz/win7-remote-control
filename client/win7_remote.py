@@ -5,7 +5,7 @@ Win7 Remote Control Client SDK
 import requests
 import base64
 import io
-from typing import Optional, Tuple
+from typing import Optional
 from PIL import Image
 
 
@@ -17,11 +17,12 @@ class Win7Remote:
         self.port = port
         self.base_url = f"http://{host}:{port}"
         self.session = requests.Session()
+        self.session.headers.update({'User-Agent': 'Win7Remote/1.0'})
 
     def screenshot(self) -> Optional[Image.Image]:
         """获取屏幕截图"""
         try:
-            resp = self.session.get(f"{self.base_url}/api/screenshot", timeout=10)
+            resp = self.session.get(f"{self.base_url}/api/screenshot", timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 img_data = base64.b64decode(data["image"])
@@ -38,7 +39,7 @@ class Win7Remote:
                 json={"action": "move", "x": x, "y": y},
                 timeout=5
             )
-            return resp.status_code == 200
+            return resp.status_code == 200 and resp.json().get("success")
         except Exception as e:
             print(f"Mouse move error: {e}")
         return False
@@ -51,7 +52,7 @@ class Win7Remote:
                 json={"action": "click", "button": button, "x": x, "y": y},
                 timeout=5
             )
-            return resp.status_code == 200
+            return resp.status_code == 200 and resp.json().get("success")
         except Exception as e:
             print(f"Mouse click error: {e}")
         return False
@@ -64,7 +65,7 @@ class Win7Remote:
                 json={"action": "drag", "button": button, "x1": x1, "y1": y1, "x2": x2, "y2": y2},
                 timeout=5
             )
-            return resp.status_code == 200
+            return resp.status_code == 200 and resp.json().get("success")
         except Exception as e:
             print(f"Mouse drag error: {e}")
         return False
@@ -77,7 +78,7 @@ class Win7Remote:
                 json={"action": "key", "key": key, "modifiers": modifiers or []},
                 timeout=5
             )
-            return resp.status_code == 200
+            return resp.status_code == 200 and resp.json().get("success")
         except Exception as e:
             print(f"Keyboard error: {e}")
         return False
@@ -90,24 +91,24 @@ class Win7Remote:
                 json={"text": text},
                 timeout=5
             )
-            return resp.status_code == 200
+            return resp.status_code == 200 and resp.json().get("success")
         except Exception as e:
             print(f"Keyboard text error: {e}")
         return False
 
     def file_upload(self, local_path: str, remote_path: str) -> bool:
-        """上传文件"""
+        """上传文件 (Base64 方式)"""
         try:
             with open(local_path, 'rb') as f:
-                files = {'file': f}
-                data = {'path': remote_path}
-                resp = self.session.post(
-                    f"{self.base_url}/api/file/upload",
-                    files=files,
-                    data=data,
-                    timeout=60
-                )
-            return resp.status_code == 200
+                data = base64.b64encode(f.read()).decode('ascii')
+
+            resp = self.session.post(
+                f"{self.base_url}/api/file/upload",
+                params={"path": remote_path},
+                json={"data": data},
+                timeout=60
+            )
+            return resp.status_code == 200 and resp.json().get("success")
         except Exception as e:
             print(f"File upload error: {e}")
         return False
@@ -138,17 +139,32 @@ class Win7Remote:
             print(f"Status error: {e}")
         return {}
 
+    def health_check(self) -> bool:
+        """健康检查"""
+        try:
+            resp = self.session.get(f"{self.base_url}/health", timeout=5)
+            return resp.status_code == 200
+        except:
+            return False
+
 
 if __name__ == "__main__":
     # 测试
     client = Win7Remote()
 
-    # 获取截图
+    print("=== Win7 Remote Control Client Test ===")
+
+    # 健康检查
+    print(f"Health: {client.health_check()}")
+
+    # 状态
+    status = client.status()
+    print(f"Status: {status}")
+
+    # 截图
+    print("Getting screenshot...")
     img = client.screenshot()
     if img:
+        print(f"Screenshot: {img.size}")
         img.save("/tmp/test_screenshot.png")
-        print("Screenshot saved")
-
-    # 移动鼠标
-    client.mouse_move(100, 100)
-    client.mouse_click(100, 100)
+        print("Saved to /tmp/test_screenshot.png")
