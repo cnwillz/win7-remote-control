@@ -19,10 +19,17 @@ class Win7Remote:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Win7Remote/1.0'})
 
-    def screenshot(self) -> Optional[Image.Image]:
-        """获取屏幕截图"""
+    def screenshot(self, format: str = "jpeg", quality: int = 70, scale: float = 1.0) -> Optional[Image.Image]:
+        """获取屏幕截图
+
+        Args:
+            format: "png" 或 "jpeg"
+            quality: JPEG 质量 1-100 (仅 format=jpeg 有效)
+            scale: 缩放比例 0.1-2.0
+        """
         try:
-            resp = self.session.get(f"{self.base_url}/api/screenshot", timeout=30)
+            params = f"format={format}&quality={quality}&scale={scale}"
+            resp = self.session.get(f"{self.base_url}/api/screenshot?{params}", timeout=30)
             if resp.status_code == 200:
                 data = resp.json()
                 img_data = base64.b64decode(data["image"])

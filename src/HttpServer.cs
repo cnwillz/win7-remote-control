@@ -6,7 +6,9 @@ using System.Text;
 using System.Threading;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using Encoder = System.Drawing.Imaging.Encoder;
 
 /// <summary>
 /// HTTP API Server - runs in user session
@@ -146,15 +148,39 @@ class HttpServer : IDisposable
     {
         try
         {
-            byte[] screenshot = CaptureScreen();
+            // 解析参数
+            string format = context.Request.QueryString["format"] ?? "png";
+            int quality = 80;
+            string q = context.Request.QueryString["quality"];
+            if (!string.IsNullOrEmpty(q))
+            {
+                int.TryParse(q, out quality);
+                if (quality < 1) quality = 1;
+                if (quality > 100) quality = 100;
+            }
+
+            float scale = 1.0f;
+            string s = context.Request.QueryString["scale"];
+            if (!string.IsNullOrEmpty(s))
+            {
+                float.TryParse(s, out scale);
+                if (scale <= 0) scale = 1.0f;
+                if (scale > 2) scale = 2.0f;
+            }
+
+            int origWidth = GetSystemMetrics(0);
+            int origHeight = GetSystemMetrics(1);
+            int newWidth = (int)(origWidth * scale);
+            int newHeight = (int)(origHeight * scale);
+
+            byte[] screenshot = CaptureScreen(origWidth, origHeight, newWidth, newHeight, format, quality);
+
             if (screenshot != null)
             {
                 string base64 = Convert.ToBase64String(screenshot);
-                int width = GetSystemMetrics(0);
-                int height = GetSystemMetrics(1);
                 string json = string.Format(
-                    "{{\"image\":\"{0}\",\"width\":{1},\"height\":{2},\"format\":\"png\"}}",
-                    base64, width, height);
+                    "{{\"image\":\"{0}\",\"width\":{1},\"height\":{2},\"format\":\"{3}\",\"size\":{4},\"origWidth\":{5},\"origHeight\":{6}}}",
+                    base64, newWidth, newHeight, format, screenshot.Length, origWidth, origHeight);
                 SendJson(context, 200, json);
             }
             else
@@ -198,7 +224,6 @@ class HttpServer : IDisposable
 
     void HandleFileUpload(HttpListenerContext context)
     {
-        // 简化：接收 URL 编码的路径和 Base64 数据
         try
         {
             using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
@@ -218,9 +243,7 @@ class HttpServer : IDisposable
                     SendJson(context, 200, "{\"success\":true,\"path\":\"" + path.Replace("\\", "\\\\") + "\"}");
                 }
                 else
-                {
                     SendJson(context, 400, "{\"error\":\"No data provided\"}");
-                }
             }
         }
         catch (Exception ex)
@@ -260,36 +283,69 @@ class HttpServer : IDisposable
         }
     }
 
-    byte[] CaptureScreen()
+    byte[] CaptureScreen(int origWidth, int origHeight, int newWidth, int newHeight, string format, int quality)
     {
-        int width = GetSystemMetrics(0);
-        int height = GetSystemMetrics(1);
         IntPtr hWnd = GetDesktopWindow();
         IntPtr hdcScreen = GetWindowDC(hWnd);
         IntPtr hdcMem = CreateCompatibleDC(hdcScreen);
-        IntPtr hBitmap = CreateCompatibleBitmap(hdcScreen, width, height);
+        IntPtr hBitmap = CreateCompatibleBitmap(hdcScreen, origWidth, origHeight);
         IntPtr old = SelectObject(hdcMem, hBitmap);
-        bool success = BitBlt(hdcMem, 0, 0, width, height, hdcScreen, 0, 0, SRCCOPY);
+
+        bool success = BitBlt(hdcMem, 0, 0, origWidth, origHeight, hdcScreen, 0, 0, SRCCOPY);
         SelectObject(hdcMem, old);
+
         byte[] result = null;
         if (success)
         {
             try
             {
                 Image img = Image.FromHbitmap(hBitmap);
+
+                // 缩放
+                if (newWidth != origWidth || newHeight != origHeight)
+                {
+                    Image thumb = img.GetThumbnailImage(newWidth, newHeight, () => false, IntPtr.Zero);
+                    img.Dispose();
+                    img = thumb;
+                }
+
                 using (MemoryStream ms = new MemoryStream())
                 {
-                    img.Save(ms, ImageFormat.Png);
+                    if (format == "jpg" || format == "jpeg")
+                    {
+                        // JPEG 压缩
+                        ImageCodecInfo jpgEncoder = GetEncoder(ImageFormat.Jpeg);
+                        EncoderParameters encoderParams = new EncoderParameters(1);
+                        encoderParams.Param[0] = new EncoderParameter(Encoder.Quality, (long)quality);
+                        img.Save(ms, jpgEncoder, encoderParams);
+                    }
+                    else
+                    {
+                        // PNG 压缩 (质量参数对 PNG 无效)
+                        img.Save(ms, ImageFormat.Png);
+                    }
                     result = ms.ToArray();
                 }
                 img.Dispose();
             }
             catch (Exception ex) { Log("Image save error: " + ex.Message); }
         }
+
         DeleteObject(hBitmap);
         DeleteDC(hdcMem);
         ReleaseDC(hWnd, hdcScreen);
         return result;
+    }
+
+    ImageCodecInfo GetEncoder(ImageFormat format)
+    {
+        ImageCodecInfo[] codecs = ImageCodecInfo.GetImageDecoders();
+        foreach (ImageCodecInfo codec in codecs)
+        {
+            if (codec.FormatID == format.Guid)
+                return codec;
+        }
+        return null;
     }
 
     void SendJson(HttpListenerContext context, int statusCode, string json)
