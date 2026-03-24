@@ -210,8 +210,14 @@ class HttpServer : IDisposable
             {
                 string body = reader.ReadToEnd();
                 Log("Input request: " + body);
-                string action = ExtractJsonString(body, "action");
-                string result = string.Format("{{\"success\":true,\"path\":\"{0}\",\"action\":\"{1}\"}}", path, action);
+
+                string inputType = "";
+                if (path.EndsWith("/mouse")) inputType = "mouse";
+                else if (path.EndsWith("/keyboard")) inputType = "key";
+                else if (path.EndsWith("/text")) inputType = "text";
+
+                bool success = ExecuteInputAgent(inputType, body);
+                string result = string.Format("{{\"success\":{0},\"type\":\"{1}\"}}", success.ToString().ToLower(), inputType);
                 SendJson(context, 200, result);
             }
         }
@@ -219,6 +225,106 @@ class HttpServer : IDisposable
         {
             Log("Input error: " + ex.Message);
             SendJson(context, 500, "{\"error\":\"" + EscapeJson(ex.Message) + "\"}");
+        }
+    }
+
+    bool ExecuteInputAgent(string type, string body)
+    {
+        try
+        {
+            string exePath = @"C:\Users\Public\InputAgent.exe";
+            if (!File.Exists(exePath))
+            {
+                Log("InputAgent.exe not found");
+                return false;
+            }
+
+            string args = "";
+            if (type == "mouse")
+            {
+                string action = ExtractJsonString(body, "action");
+                if (action == "move")
+                {
+                    int x = int.Parse(ExtractJsonString(body, "x"));
+                    int y = int.Parse(ExtractJsonString(body, "y"));
+                    args = string.Format("mouse move {0} {1}", x, y);
+                }
+                else if (action == "click")
+                {
+                    int x = int.Parse(ExtractJsonString(body, "x"));
+                    int y = int.Parse(ExtractJsonString(body, "y"));
+                    string button = ExtractJsonString(body, "button");
+                    if (string.IsNullOrEmpty(button)) button = "left";
+                    args = string.Format("mouse click {0} {1} {2}", x, y, button);
+                }
+                else if (action == "drag")
+                {
+                    int x1 = int.Parse(ExtractJsonString(body, "x1"));
+                    int y1 = int.Parse(ExtractJsonString(body, "y1"));
+                    int x2 = int.Parse(ExtractJsonString(body, "x2"));
+                    int y2 = int.Parse(ExtractJsonString(body, "y2"));
+                    string button = ExtractJsonString(body, "button");
+                    if (string.IsNullOrEmpty(button)) button = "left";
+                    args = string.Format("mouse drag {0} {1} {2} {3} {4}", x1, y1, x2, y2, button);
+                }
+                else if (action == "wheel")
+                {
+                    int delta = int.Parse(ExtractJsonString(body, "delta"));
+                    args = string.Format("mouse wheel {0}", delta);
+                }
+            }
+            else if (type == "key")
+            {
+                string key = ExtractJsonString(body, "key");
+                string modifiersStr = ExtractJsonString(body, "modifiers");
+                bool extended = modifiersStr.Contains("ctrl") || modifiersStr.Contains("alt");
+
+                // 处理修饰键
+                if (modifiersStr.Contains("ctrl"))
+                {
+                    args = string.Format("key {0}", key);
+                }
+                else
+                {
+                    args = string.Format("key {0}", key);
+                }
+            }
+            else if (type == "text")
+            {
+                string text = ExtractJsonString(body, "text");
+                args = string.Format("text {0}", text);
+            }
+
+            if (string.IsNullOrEmpty(args))
+            {
+                Log("Empty args for InputAgent");
+                return false;
+            }
+
+            Log("Executing: InputAgent " + args);
+
+            System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo();
+            psi.FileName = exePath;
+            psi.Arguments = args;
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.CreateNoWindow = true;
+
+            System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi);
+            p.WaitForExit(5000);
+
+            string output = p.StandardOutput.ReadToEnd();
+            string error = p.StandardError.ReadToEnd();
+            if (!string.IsNullOrEmpty(output)) Log("InputAgent output: " + output);
+            if (!string.IsNullOrEmpty(error)) Log("InputAgent error: " + error);
+
+            return p.ExitCode == 0;
+        }
+        catch (Exception ex)
+        {
+            Log("ExecuteInputAgent error: " + ex.Message);
+            return false;
         }
     }
 
@@ -364,11 +470,29 @@ class HttpServer : IDisposable
             int keyIndex = json.IndexOf("\"" + key + "\"");
             if (keyIndex < 0) return "";
             int colonIndex = json.IndexOf(":", keyIndex);
-            int valueStart = json.IndexOf("\"", colonIndex);
-            if (valueStart < 0) return "";
-            int valueEnd = json.IndexOf("\"", valueStart + 1);
-            if (valueEnd < 0) return "";
-            return json.Substring(valueStart + 1, valueEnd - valueStart - 1);
+            if (colonIndex < 0) return "";
+
+            // Skip whitespace after colon
+            int valueStart = colonIndex + 1;
+            while (valueStart < json.Length && json[valueStart] == ' ') valueStart++;
+            if (valueStart >= json.Length) return "";
+
+            // Check if value is quoted (string) or unquoted (number)
+            if (json[valueStart] == '"')
+            {
+                int quoteStart = valueStart;
+                int quoteEnd = json.IndexOf("\"", quoteStart + 1);
+                if (quoteEnd < 0) return "";
+                return json.Substring(quoteStart + 1, quoteEnd - quoteStart - 1);
+            }
+            else
+            {
+                // Unquoted number - extract digits and optional decimal point
+                int valueEnd = valueStart;
+                while (valueEnd < json.Length && (char.IsDigit(json[valueEnd]) || json[valueEnd] == '.')) valueEnd++;
+                if (valueEnd == valueStart) return "";
+                return json.Substring(valueStart, valueEnd - valueStart);
+            }
         }
         catch { return ""; }
     }
