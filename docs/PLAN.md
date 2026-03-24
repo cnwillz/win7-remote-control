@@ -1,170 +1,113 @@
 # Win7 Remote Control - 开发计划
 
 ## 目标
-将截图工具升级为可用的远程控制程序，通过 API 从本机调用，实现完整的远程控制功能。
+将截图工具升级为可用的远程控制程序，通过 HTTP API 从本机调用，实现完整的远程控制功能。
 
-## 功能列表
+## 功能状态
 
-### Phase 1: 基础能力 (MVP)
-- [ ] **屏幕获取** - 已实现，需优化
-- [ ] **API 接口** - 设计并实现 HTTP/WS API
-- [ ] **命令行工具** - 本地调用脚本
+### Phase 1: 基础能力 (MVP) ✅ 完成
+- [x] **屏幕获取** - GDI BitBlt, 支持 PNG/JPEG, 质量/缩放可调
+- [x] **HTTP API** - HttpListener 实现
+- [x] **命令行工具** - Python SDK + 测试脚本
 
-### Phase 2: 输入控制
-- [ ] **鼠标控制** - 移动、点击、滚轮
-- [ ] **键盘控制** - 按键、文本输入
-- [ ] **组合键支持** - Ctrl+C, Alt+Tab 等
+### Phase 2: 输入控制 ✅ 完成
+- [x] **鼠标控制** - 移动/点击/拖动/滚轮
+- [x] **键盘控制** - 按键/文本输入
+- [ ] **组合键支持** - Ctrl+C, Alt+Tab 等 (部分支持)
 
-### Phase 3: 文件传输
-- [ ] **SMB 优化** - 利用现有 SMB 连接
-- [ ] **断点续传** - 大文件支持
-- [ ] **目录同步** - 批量传输
+### Phase 3: 文件传输 ✅ 完成
+- [x] **上传下载** - Base64 方式实现
 
-### Phase 4: 高级功能
-- [ ] **拖放操作** - 文件跨网络拖放
+### Phase 4: 高级功能 (待开发)
 - [ ] **剪贴板同步** - 跨设备复制粘贴
 - [ ] **多屏支持** - 多显示器环境
+- [ ] **拖放操作** - 文件跨网络拖放
 
 ## 技术方案
 
-### 通信协议
-
-**方案 A: HTTP REST API**
+### 通信协议: HTTP REST API
 - 简单易用
 - 易于调试
-- 缺点：延迟较高
-
-**方案 B: WebSocket**
-- 支持实时交互
-- 双向通信
-- 缺点：实现复杂
-
-**方案 C: STDIO/命名管道**
-- 适合本地调用
-- 简单直接
-- 缺点：需要辅助通道
-
-**推荐方案**: HTTP API + WebSocket 混合
-- 截图/文件用 HTTP
-- 鼠标键盘用 WebSocket
+- 延迟可接受
 
 ### Agent 架构
 
 ```
-Win7RCAgent/
-├── AgentService.cs      # Windows 服务 (LocalSystem)
-├── HttpServer.cs        # 内嵌 HTTP 服务器
-├── SessionManager.cs    # 会话管理
-├── Agents/
-│   ├── ScreenshotAgent.cs   # 屏幕截图
-│   ├── InputAgent.cs        # 鼠标/键盘
-│   └── FileAgent.cs         # 文件传输
-└── Protocols/
-    ├── HttpHandler.cs
-    └── WsHandler.cs
+Win7 Remote Control/
+├── LauncherAgent.cs       # Windows 服务 (Session 0 → 用户 Session)
+├── HttpServer.cs         # HTTP API 服务器 (用户 Session)
+├── InputAgent.cs         # 输入控制代理
+└── SessionManager.cs     # 会话管理
 ```
 
 ### API 设计
 
+| 端点 | 方法 | 状态 |
+|------|------|------|
+| `/api/screenshot` | GET | ✅ |
+| `/api/status` | GET | ✅ |
+| `/api/input/mouse` | POST | ✅ |
+| `/api/input/keyboard` | POST | ✅ |
+| `/api/input/text` | POST | ✅ |
+| `/api/file/upload` | POST | ✅ |
+| `/api/file/download` | GET | ✅ |
+| `/health` | GET | ✅ |
+
+## 已完成任务
+
+| 日期 | 任务 | 说明 |
+|------|------|------|
+| 2026-03-25 | Session 0 隔离解决 | 通过 Win7RCHttp 服务 + CreateProcessAsUser |
+| 2026-03-25 | HTTP API 实现 | HttpServer.cs + 8 个端点 |
+| 2026-03-25 | 鼠标键盘控制 | InputAgent.cs + ExecuteInputAgent |
+| 2026-03-25 | ExtractJsonString 修复 | 支持未加引号整数 JSON |
+| 2026-03-25 | Python SDK | client/win7_remote.py |
+| 2026-03-25 | 部署脚本 | scripts/ 目录 |
+| 2026-03-25 | API 测试通过 | 12/12 测试 |
+
+## 待优化
+
+1. **截图压缩** - JPEG 70% 60KB, 可进一步优化
+2. **组合键支持** - 修饰键组合未完全测试
+3. **多显示器** - 仅支持主显示器
+4. **错误处理** - 完善各端点错误处理
+5. **日志系统** - 统一日志管理
+
+## 项目结构
+
 ```
-POST /api/screenshot          # 获取截图
-POST /api/input/mouse         # 鼠标操作
-POST /api/input/keyboard      # 键盘操作
-POST /api/input/text          # 文本输入
-POST /api/file/upload         # 上传文件
-GET  /api/file/download       # 下载文件
-GET  /ws/control             # WebSocket 控制通道
-GET  /api/status              # 状态查询
-```
-
-### 请求格式
-
-```json
-// 截图
-POST /api/screenshot
-Response: { "image": "base64...", "width": 1440, "height": 900 }
-
-// 鼠标移动
-POST /api/input/mouse
-Body: { "action": "move", "x": 100, "y": 200 }
-
-// 鼠标点击
-POST /api/input/mouse
-Body: { "action": "click", "button": "left", "x": 100, "y": 200 }
-
-// 键盘
-POST /api/input/keyboard
-Body: { "action": "key", "key": "A", "modifiers": ["ctrl"] }
-
-// 文本输入
-POST /api/input/text
-Body: { "text": "hello world" }
-
-// 文件上传
-POST /api/file/upload
-Body: multipart/form-data
-```
-
-## 本地客户端
-
-### Python SDK
-
-```python
-class Win7Remote:
-    def __init__(self, host, port=8080):
-        self.base_url = f"http://{host}:{port}"
-
-    def screenshot(self) -> Image:
-        """获取屏幕截图"""
-
-    def mouse_move(self, x, y):
-        """移动鼠标"""
-
-    def mouse_click(self, x, y, button='left'):
-        """鼠标点击"""
-
-    def keyboard_key(self, key, modifiers=None):
-        """按键"""
-
-    def keyboard_text(self, text):
-        """文本输入"""
-
-    def file_upload(self, local_path, remote_path):
-        """上传文件"""
-
-    def file_download(self, remote_path, local_path):
-        """下载文件"""
+win7-remote-control/
+├── src/
+│   ├── HttpServer.cs      # HTTP API 服务器
+│   ├── InputAgent.cs      # 输入控制代理
+│   └── LauncherAgent.cs   # Windows 服务
+├── client/
+│   └── win7_remote.py    # Python SDK
+├── scripts/
+│   ├── smb_mount.sh      # SMB 挂载
+│   ├── ssh_remote.py     # 远程控制
+│   ├── api_test.py       # API 测试
+│   └── deploy.sh         # 部署脚本
+├── docs/
+│   └── PLAN.md           # 本文件
+└── README.md
 ```
 
-## 开发任务
+## 使用方式
 
-### Task 1: 项目重构
-- [ ] 重构现有代码结构
-- [ ] 添加 Agent 基础框架
-- [ ] 实现 HTTP 服务器
+```bash
+# 1. 部署
+./scripts/deploy.sh
 
-### Task 2: API 实现
-- [ ] 截图 API
-- [ ] 鼠标控制 API
-- [ ] 键盘控制 API
-- [ ] 文件传输 API
+# 2. 测试
+./scripts/api_test.py --test all
 
-### Task 3: 本地客户端
-- [ ] Python SDK
-- [ ] 命令行工具
-- [ ] 交互式控制台
-
-### Task 4: 优化
-- [ ] 截图压缩优化
-- [ ] 增量更新
-- [ ] 错误处理
-
-##里程碑
-
-- [ ] M1: 基础框架运行 (1天)
-- [ ] M2: 屏幕+鼠标键盘可用 (2天)
-- [ ] M3: 文件传输完成 (1天)
-- [ ] M4: 本地客户端完成 (1天)
-- [ ] M5: 测试优化发布 (1天)
-
-总计预计: 6天
+# 3. 使用 Python SDK
+python3 -c "
+from client.win7_remote import Win7Remote
+c = Win7Remote('192.168.5.55', 8080)
+c.screenshot().save('/tmp/screen.jpg')
+c.mouse_click(500, 300)
+c.keyboard_text('hello')
+"
+```
