@@ -183,9 +183,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    global BASE_URL
-    BASE_URL = f"http://{args.host}:{args.port}"
-
     if args.test == 'all':
         test_all()
     elif args.test == 'input':
